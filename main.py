@@ -1,62 +1,66 @@
-import httpx
-from astrbot.api.event import filter, AstrMessageEvent, MessageChain
+from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
-from astrbot.api.message_components import Image, Plain # 保持导入
+import httpx
 
-@register("terraria_wiki", "marsyuzhe", "泰拉瑞亚 Wiki 助手", "1.0.0")
+@register("terraria_wiki", "marsyuzhe", "泰拉瑞亚百科查询插件", "1.0.0")
 class TerrariaPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
-        self.api_url = "https://terraria.wiki.gg/zh/api.php"
 
+    # 这里的指令触发词是 /tr 物品名
     @filter.command("tr")
-    async def search_wiki(self, event: AstrMessageEvent, keyword: str):
-        '''查询泰拉瑞亚 Wiki。用法: /tr [关键词]'''
+    async def search_wiki(self, event: AstrMessageEvent, item_name: str):
+        '''查询泰拉瑞亚 Wiki 物品信息'''
         
-        yield event.plain_result(f"🔍 正在从 Wiki 搬运【{keyword}】的信息...")
+        # 提示用户正在查询，增强互动感
+        yield event.plain_result(f"🔍 正在为你去 Wiki.gg 翻找关于 '{item_name}' 的资料...")
 
-        async with httpx.AsyncClient() as client:
-            try:
-                # 1. 搜索
-                search_params = {"action": "query", "list": "search", "srsearch": keyword, "format": "json", "srlimit": 1}
-                search_res = await client.get(self.api_url, params=search_params)
-                search_data = search_res.json()
+        base_url = "https://terraria.wiki.gg/zh/api.php" # 中文 Wiki
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                # 第一步：搜索最匹配的页面标题
+                search_params = {
+                    "action": "opensearch",
+                    "search": item_name,
+                    "limit": 1,
+                    "format": "json"
+                }
+                search_resp = await client.get(base_url, params=search_params)
+                search_data = search_resp.json()
 
-                if not search_data['query']['search']:
-                    yield event.plain_result(f"❌ 找不到词条。")
+                if not search_data[1]:
+                    yield event.plain_result(f"❌ 哎呀，没找到 '{item_name}'。是不是名字打错了？")
                     return
 
-                real_title = search_data['query']['search'][0]['title']
-                
-                # 2. 详情
-                detail_params = {
-                    "action": "query", "prop": "extracts|pageimages", "exintro": True,
-                    "explaintext": True, "titles": real_title, "pithumbsize": 500, "format": "json"
+                real_title = search_data[1][0]
+                page_url = search_data[3][0]
+
+                # 第二步：获取页面简介
+                query_params = {
+                    "action": "query",
+                    "prop": "extracts",
+                    "exintro": True,
+                    "explaintext": True,
+                    "titles": real_title,
+                    "format": "json"
                 }
-                detail_res = await client.get(self.api_url, params=detail_params)
-                pages = detail_res.json()['query']['pages']
-                page_data = pages[list(pages.keys())[0]]
+                query_resp = await client.get(base_url, params=query_params)
+                pages = query_resp.json()["query"]["pages"]
+                page_id = list(pages.keys())[0]
+                extract = pages[page_id].get("extract", "暂无简介")
 
-                summary = page_data.get('extract', '暂无介绍')[:150] + "..."
-                image_url = page_data.get('thumbnail', {}).get('source')
-                wiki_link = f"https://terraria.wiki.gg/zh/{real_title.replace(' ', '_')}"
-
-                # 3. 构建消息链 (使用这种最保险的构造方式)
-                # 直接在列表里放进所有组件
-                components = [
-                    Plain(f"✨ 【{real_title}】\n\n"),
-                ]
+                # 只截取前 150 个字，避免刷屏
+                summary = extract[:150] + "..." if len(extract) > 150 else extract
                 
-                if image_url:
-                    components.append(Image.fromURL(image_url))
-                
-                components.append(Plain(f"\n📖 简介：{summary}\n"))
-                components.append(Plain(f"\n🔗 详情：{wiki_link}"))
+                # 最后返回结果
+                result_msg = (
+                    f"📖 【{real_title}】\n"
+                    f"------------------\n"
+                    f"{summary}\n\n"
+                    f"🔗 详情传送门: {page_url}"
+                )
+                yield event.plain_result(result_msg)
 
-                # 用 components 列表直接创建 MessageChain
-                chain = MessageChain(components)
-
-                yield event.chain_result(chain)
-
-            except Exception as e:
-                yield event.plain_result(f"⚠️ 查询发生错误: {str(e)}")
+        except Exception as e:
+            yield event.plain_result(f"⚠️ 访问 Wiki 时出错了: {str(e)}")
