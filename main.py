@@ -1,7 +1,7 @@
 import httpx
 from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from astrbot.api.star import Context, Star, register
-from astrbot.api.message_components import Image, PlainText # 增加了 PlainText 导入
+from astrbot.api.message_components import Image, Plain # 这里改成了 Plain
 
 @register("terraria_wiki", "marsyuzhe", "泰拉瑞亚 Wiki 助手", "1.0.0")
 class TerrariaPlugin(Star):
@@ -56,19 +56,17 @@ class TerrariaPlugin(Star):
                 image_url = page_data.get('thumbnail', {}).get('source')
                 wiki_link = f"https://terraria.wiki.gg/zh/{real_title.replace(' ', '_')}"
 
-                # 3. 构建消息链 (采用最原始但最稳健的写法)
+                # 3. 构建消息链
                 chain = MessageChain()
                 
-                # 添加标题
-                chain.message_components.append(PlainText(f"✨ 【{real_title}】\n\n"))
+                # 使用 Plain 而不是 PlainText
+                chain.message_components.append(Plain(f"✨ 【{real_title}】\n\n"))
                 
-                # 添加图片
                 if image_url:
                     chain.message_components.append(Image.fromURL(image_url))
                 
-                # 添加简介和链接
-                chain.message_components.append(PlainText(f"\n📖 简介：{summary}\n"))
-                chain.message_components.append(PlainText(f"\n🔗 详情：{wiki_link}"))
+                chain.message_components.append(Plain(f"\n📖 简介：{summary}\n"))
+                chain.message_components.append(Plain(f"\n🔗 详情：{wiki_link}"))
 
                 yield event.chain_result(chain)
 
