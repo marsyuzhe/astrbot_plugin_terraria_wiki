@@ -1,66 +1,74 @@
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 import httpx
+from bs4 import BeautifulSoup # 导入洗数据工具
 
-@register("terraria_wiki", "marsyuzhe", "泰拉瑞亚百科查询插件", "1.0.0")
+@register("terraria_wiki", "marsyuzhe", "泰拉瑞亚纯文本百科", "1.1.0")
 class TerrariaPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
 
-    # 这里的指令触发词是 /tr 物品名
     @filter.command("tr")
     async def search_wiki(self, event: AstrMessageEvent, item_name: str):
-        '''查询泰拉瑞亚 Wiki 物品信息'''
+        '''直接输出泰拉瑞亚物品文本'''
         
-        # 提示用户正在查询，增强互动感
-        yield event.plain_result(f"🔍 正在为你去 Wiki.gg 翻找关于 '{item_name}' 的资料...")
+        yield event.plain_result(f"📡 正在接入泰拉瑞亚资料库，请稍候...")
 
-        base_url = "https://terraria.wiki.gg/zh/api.php" # 中文 Wiki
+        # 使用中文 Wiki 接口
+        base_url = "https://terraria.wiki.gg/zh/api.php"
         
-        try:
-            async with httpx.AsyncClient() as client:
-                # 第一步：搜索最匹配的页面标题
-                search_params = {
-                    "action": "opensearch",
-                    "search": item_name,
-                    "limit": 1,
-                    "format": "json"
-                }
+        async with httpx.AsyncClient() as client:
+            try:
+                # 1. 搜索标题
+                search_params = {"action": "opensearch", "search": item_name, "limit": 1, "format": "json"}
                 search_resp = await client.get(base_url, params=search_params)
                 search_data = search_resp.json()
 
                 if not search_data[1]:
-                    yield event.plain_result(f"❌ 哎呀，没找到 '{item_name}'。是不是名字打错了？")
+                    yield event.plain_result(f"❌ 找不到物品 '{item_name}'，请检查名称是否正确。")
                     return
 
                 real_title = search_data[1][0]
-                page_url = search_data[3][0]
 
-                # 第二步：获取页面简介
+                # 2. 获取页面的 HTML 内容（这样抓取的数据最全）
                 query_params = {
-                    "action": "query",
-                    "prop": "extracts",
-                    "exintro": True,
-                    "explaintext": True,
-                    "titles": real_title,
-                    "format": "json"
+                    "action": "parse",
+                    "page": real_title,
+                    "prop": "text",
+                    "format": "json",
+                    "redirects": True
                 }
                 query_resp = await client.get(base_url, params=query_params)
-                pages = query_resp.json()["query"]["pages"]
-                page_id = list(pages.keys())[0]
-                extract = pages[page_id].get("extract", "暂无简介")
+                html_content = query_resp.json()["parse"]["text"]["*"]
 
-                # 只截取前 150 个字，避免刷屏
-                summary = extract[:150] + "..." if len(extract) > 150 else extract
+                # 3. 使用 BeautifulSoup 清理 HTML，提取纯文本
+                soup = BeautifulSoup(html_content, "html.parser")
                 
-                # 最后返回结果
-                result_msg = (
-                    f"📖 【{real_title}】\n"
-                    f"------------------\n"
-                    f"{summary}\n\n"
-                    f"🔗 详情传送门: {page_url}"
-                )
-                yield event.plain_result(result_msg)
+                # 提取所有的段落 <p>
+                paragraphs = soup.find_all("p")
+                
+                # 过滤掉空的段落，取前 3 段最核心的内容
+                clean_text = ""
+                count = 0
+                for p in paragraphs:
+                    text = p.get_text().strip()
+                    if text and len(text) > 10: # 过滤掉太短的无意义字符
+                        clean_text += text + "\n\n"
+                        count += 1
+                    if count >= 3: # 只要前三段，防止太长刷屏
+                        break
 
-        except Exception as e:
-            yield event.plain_result(f"⚠️ 访问 Wiki 时出错了: {str(e)}")
+                if not clean_text:
+                    clean_text = "该页面暂时没有可读的文本描述。"
+
+                # 4. 最终组合输出
+                final_report = (
+                    f"⚔️ 【泰拉瑞亚百科：{real_title}】\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"{clean_text.strip()}"
+                )
+                
+                yield event.plain_result(final_report)
+
+            except Exception as e:
+                yield event.plain_result(f"⚠️ 查询出错：{str(e)}")
