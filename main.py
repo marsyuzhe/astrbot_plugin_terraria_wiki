@@ -1,7 +1,7 @@
 import httpx
 from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from astrbot.api.star import Context, Star, register
-from astrbot.api.message_components import Image
+from astrbot.api.message_components import Image, PlainText # 增加了 PlainText 导入
 
 @register("terraria_wiki", "marsyuzhe", "泰拉瑞亚 Wiki 助手", "1.0.0")
 class TerrariaPlugin(Star):
@@ -11,7 +11,7 @@ class TerrariaPlugin(Star):
 
     @filter.command("tr")
     async def search_wiki(self, event: AstrMessageEvent, keyword: str):
-        '''查询泰拉瑞亚 Wiki 并返回图片和简介。用法: /tr [关键词]'''
+        '''查询泰拉瑞亚 Wiki。用法: /tr [关键词]'''
         
         yield event.plain_result(f"🔍 正在从 Wiki 搬运【{keyword}】的信息...")
 
@@ -56,15 +56,19 @@ class TerrariaPlugin(Star):
                 image_url = page_data.get('thumbnail', {}).get('source')
                 wiki_link = f"https://terraria.wiki.gg/zh/{real_title.replace(' ', '_')}"
 
-                # 3. 构建消息链 (注意这里使用了 .text 而不是 .plain)
+                # 3. 构建消息链 (采用最原始但最稳健的写法)
                 chain = MessageChain()
-                chain.text(f"✨ 【{real_title}】\n\n")
                 
+                # 添加标题
+                chain.message_components.append(PlainText(f"✨ 【{real_title}】\n\n"))
+                
+                # 添加图片
                 if image_url:
                     chain.message_components.append(Image.fromURL(image_url))
                 
-                chain.text(f"\n📖 简介：{summary}\n")
-                chain.text(f"\n🔗 详情：{wiki_link}")
+                # 添加简介和链接
+                chain.message_components.append(PlainText(f"\n📖 简介：{summary}\n"))
+                chain.message_components.append(PlainText(f"\n🔗 详情：{wiki_link}"))
 
                 yield event.chain_result(chain)
 
