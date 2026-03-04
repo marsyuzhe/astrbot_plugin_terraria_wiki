@@ -2,7 +2,7 @@ import requests
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 
-@register("terraria_wiki", "marsyuzhe", "泰拉瑞亚助手", "1.2.1")
+@register("terraria_wiki", "marsyuzhe", "泰拉瑞亚助手", "1.2.2")
 class TerrariaPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -55,11 +55,10 @@ class TerrariaPlugin(Star):
             user_prompt = query
             system_msg = "你是一个泰拉瑞亚专家。我没在 Wiki 搜到相关内容，请直接根据你的知识库回答用户。"
 
-        # 3. 获取 AI 提供商并聊天 (修复点在此)
+        # 3. 获取 AI 提供商并聊天 (使用兼容性最强的 event.get_llm_provider)
         try:
-            provider_id = await self.context.get_current_chat_provider_id(event.unified_msg_origin)
-            # 修复：直接从 context 获取 provider
-            provider = await self.context.get_llm_provider(provider_id)
+            # 这里的改进是直接用 event 获取 provider
+            provider = await event.get_llm_provider()
             
             resp = await provider.text_chat(
                 prompt=user_prompt,
@@ -67,4 +66,5 @@ class TerrariaPlugin(Star):
             )
             yield event.plain_result(resp.completion_text)
         except Exception as e:
+            # 记录详细错误方便调试
             yield event.plain_result(f"查询失败，原因：{str(e)}")
