@@ -1,24 +1,81 @@
-from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
+import requests
+from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
-from astrbot.api import logger
+from astrbot.core.agent.tool import FunctionTool, ToolExecResult
+from pydantic import Field
+from pydantic.dataclasses import dataclass
 
-@register("helloworld", "YourName", "一个简单的 Hello World 插件", "1.0.0")
-class MyPlugin(Star):
+# 1. 定义搜索 Wiki 的“工具”
+@dataclass
+class TerrariaSearchTool(FunctionTool):
+    name: str = "search_terraria_wiki"
+    description: str = "当用户询问有关泰拉瑞亚物品、合成、BOSS、攻略时调用此工具。"
+    parameters: dict = Field(default_factory=lambda: {
+        "type": "object",
+        "properties": {
+            "keyword": {"type": "string", "description": "要查询的关键词"}
+        },
+        "required": ["keyword"]
+    })
+
+    async def call(self, context, keyword: str) -> ToolExecResult:
+        # 这里使用 Wiki.gg 的官方 API
+        url = "https://terraria.wiki.gg/api.php"
+        params = {
+            "action": "query",
+            "list": "search",
+            "srsearch": keyword,
+            "format": "json"
+        }
+        try:
+            r = requests.get(url, params=params).json()
+            search_results = r.get("query", {}).get("search", [])
+            if not search_results:
+                return "未找到相关 Wiki 内容。"
+            
+            # 取第一个结果的标题，再获取它的简要内容
+            title = search_results[0]['title']
+            content_params = {
+                "action": "query",
+                "prop": "extracts",
+                "exintro": True,
+                "explaintext": True,
+                "titles": title,
+                "format": "json"
+            }
+            c_r = requests.get(url, params=content_params).json()
+            pages = c_r.get("query", {}).get("pages", {})
+            text = next(iter(pages.values())).get("extract", "无正文内容")
+            
+            return f"Wiki 条目【{title}】的内容：{text[:500]}..." # 返回前500字给AI
+        except Exception as e:
+            return f"搜索出错：{str(e)}"
+
+# 2. 注册插件
+@register("terraria_wiki", "marsyuzhe", "泰拉瑞亚助手", "1.0.0")
+class TerrariaPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
 
-    async def initialize(self):
-        """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
+    # 监听指令 /tr
+    @filter.command("tr")
+    async def tr_command(self, event: AstrMessageEvent):
+        '''提问关于泰拉瑞亚的问题。用法：/tr 永夜刃怎么合成？'''
+        query = event.message_str.replace("/tr", "").strip()
+        if not query:
+            yield event.plain_result("你想问什么？例如：/tr 怎么打克苏鲁之眼？")
+            return
 
-    # 注册指令的装饰器。指令名为 helloworld。注册成功后，发送 `/helloworld` 就会触发这个指令，并回复 `你好, {user_name}!`
-    @filter.command("helloworld")
-    async def helloworld(self, event: AstrMessageEvent):
-        """这是一个 hello world 指令""" # 这是 handler 的描述，将会被解析方便用户了解插件内容。建议填写。
-        user_name = event.get_sender_name()
-        message_str = event.message_str # 用户发的纯文本消息字符串
-        message_chain = event.get_messages() # 用户所发的消息的消息链 # from astrbot.api.message_components import *
-        logger.info(message_chain)
-        yield event.plain_result(f"Hello, {user_name}, 你发了 {message_str}!") # 发送一条纯文本消息
+        # 获取当前使用的 AI 模型 ID
+        provider_id = await self.context.get_current_chat_provider_id(event.unified_msg_origin)
 
-    async def terminate(self):
-        """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""
+        # 让 AI 带着“工具”去思考并回答
+        resp = await self.context.tool_loop_agent(
+            event=event,
+            chat_provider_id=provider_id,
+            prompt=query,
+            system_prompt="你是一个泰拉瑞亚专家。请利用搜索工具获取 Wiki 信息，然后用亲切的语气回答用户。",
+            tools=[TerrariaSearchTool()]
+        )
+        
+        yield event.plain_result(resp.completion_text)
